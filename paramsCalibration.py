@@ -10,7 +10,7 @@ from algo_geneticProgramming import Population
 from algo_geneticProgramming import ParamsState
 
 from utils_results import AvgResults
-from utils_results import GoToNextResultFile
+from utils_results import ChangeName2NextResultFile
 
 from utils_history import GetHistoryFromFile
 from utils_history import JoinTransitions
@@ -37,8 +37,13 @@ class Calibration:
         self.numGeneration = 0
 
 
-    def Cycle(self):
-        if self.LoadPopulation():
+    def Cycle(self, go2NextWOFitness=False):
+        populationExist, fitnessExist = self.LoadPopulation()
+        
+        if populationExist and not go2NextWOFitness and not fitnessExist:
+            return
+
+        if populationExist:
             # go to next generation if prev generation exist
             self.populationMngr.Cycle()
             self.numGeneration += 1
@@ -64,12 +69,12 @@ class Calibration:
         populationDict["population"] = populationsAndDir
         populationFName = self.configDict["directory"] + "/" + CURRENT_POPULATION_FILE_NAME
 
-        open(populationFName, "w+").write(str(populationDict))
+        a = open(populationFName, "w+").write(str(populationDict))
 
     def LoadPopulation(self):
         populationFName = self.configDict["directory"] + "/" + CURRENT_POPULATION_FILE_NAME
         if not os.path.isfile(populationFName):
-            return False
+            return False, False
 
         populationList = eval(open(populationFName, "r+").read())        
         self.numGeneration = populationList["numGeneration"]
@@ -80,17 +85,18 @@ class Calibration:
         
         if "fitness" in populationList.keys():
             self.populationMngr.Population(population, np.array(populationList["fitness"]))
+            return True, True
         else:
             self.populationMngr.Population(population)
-
-        return True
+            return True, False
 
     def Size(self):
         return self.populationMngr.Size()
 
 def ChangeParamsAccordingToDict(params, paramsDict):
     if "learningRatePower" in paramsDict:
-        params.learning_rate = 10 ** paramsDict["learningRatePower"]
+        params.learning_rateActor = 10 ** paramsDict["learningRatePower"]
+        params.learning_rateCritic = 10 ** paramsDict["learningRatePower"]
     return params
 
 def CreateParamsState(params2Calibrate):
@@ -104,6 +110,25 @@ def CreateParamsState(params2Calibrate):
 
     return paramState
 
+def SetPopulationTrained(directory):
+    populationFName = directory + "/" + CURRENT_POPULATION_FILE_NAME
+    if not os.path.isfile(populationFName):
+        return False
+
+    populationDict = eval(open(populationFName, "r+").read())   
+    populationDict["trained"] = True
+
+    open(populationFName, "w+").write(str(populationDict))
+    
+def GetPopulationDict(directory):
+    populationFName = directory + "/" + CURRENT_POPULATION_FILE_NAME
+    if not os.path.isfile(populationFName):
+        return {}, 0
+
+    populationDict = eval(open(populationFName, "r+").read())        
+    return populationDict, populationDict["numGeneration"]
+
+
 def GeneticProgrammingGeneration(populationSize, numInstances, configDict, runType): 
     parms2Calib = configDict["params2Calibrate"]
     paramsState = CreateParamsState(parms2Calib)
@@ -111,7 +136,7 @@ def GeneticProgrammingGeneration(populationSize, numInstances, configDict, runTy
     params = GP_Params(populationSize=populationSize)
     
     calib = Calibration(configDict, runType, paramsState, params, numInstances)
-    calib.Cycle()
+    calib.Cycle(go2NextWOFitness=False)
 
 
 def ReadGPFitness(configDict, runType): 
@@ -126,7 +151,7 @@ def ReadGPFitness(configDict, runType):
             # hard coded todo: do it better
             path = configDict["directory"] + "/ArmyAttack/" + runType["directory"]
             r = AvgResults(path, runType["results"], idx)
-            GoToNextResultFile(path, runType["results"], idx, populationList["numGeneration"])
+            ChangeName2NextResultFile(path, runType["results"], idx, populationList["numGeneration"])
             if r != None:
                 results.append(r)
 
@@ -164,11 +189,9 @@ def ReadGPFitness(configDict, runType):
 
 def TrainSingleGP(configDict, runType, dmInitFunc, dirCopyIdx):
     paramsDict = configDict["hyperParams"]
-    
-    if "hundredsTrainEpisodes" in paramsDict:
-        numTrainEpisodes = paramsDict["hundredsTrainEpisodes"] * 100
-    else:
-        numTrainEpisodes = 5000
+
+    numTrainEpisodes = paramsDict["numEpochs"] * paramsDict["epochSize"]
+
 
     transitions = ReadAllHistFile(configDict, runType, numTrainEpisodes)
     if transitions == {}:
@@ -177,7 +200,7 @@ def TrainSingleGP(configDict, runType, dmInitFunc, dirCopyIdx):
     else:
         print("hist size read = ", np.sum(transitions["terminal"]), "num supposed to load =", numTrainEpisodes)
 
-    decisionMaker, _ = dmInitFunc(configDict, isMultiThreaded=False, dmCopy=dirCopyIdx)
+    decisionMaker, _ = dmInitFunc(configDict, isMultiThreaded=False, dmCopy=dirCopyIdx, hyperParamsDict=paramsDict)
 
     with tf.Session() as sess:
         decisionMaker.InitModel(sess, resetModel=True)  
@@ -187,7 +210,7 @@ def TrainSingleGP(configDict, runType, dmInitFunc, dirCopyIdx):
         s_ = transitions["s_"]
         terminal = transitions["terminal"]
 
-        numTrainEpisodes = paramsDict["hundredsTrainEpisodes"] * 100
+        numTrainEpisodes = paramsDict["numEpochs"] * paramsDict["epochSize"]
         numTrain = 0
         
         training = True

@@ -15,18 +15,20 @@ from utils import EmptyLock
 
 # dqn params
 class DQN_PARAMS(ParamsBase):
-    def __init__(self, stateSize, numActions, layersNum=1, neuronsInLayerNum=256, numTrials2CmpResults=1000, nn_Func=None, numTrials2Learn=None, numTrials2Save=100,
-                outputGraph=True, discountFactor=0.95, batchSize=32, maxReplaySize=500000, minReplaySize=1000, 
-                explorationProb=0.1, descendingExploration=True, exploreChangeRate=0.001, learning_rate=0.00001, 
-                normalizeRewards=False, normalizeState=True, numRepeatsTerminalLearning=10, accumulateHistory=True):
+    def __init__(self, frameSize, gameVarsSize, numActions, layersNum=1, neuronsInLayerNum=256, numTrials2CmpResults=1000, nn_Func=None, numTrials2Learn=None, numTrials2Save=100,
+                outputGraph=True, discountFactor=0.95, batchSize=32, maxReplaySize=100000, minReplaySize=100, 
+                explorationProb=0.1, descendingExploration=True, exploreChangeRate=0.001, learning_rate=0.00025, 
+                normalizeRewards=True, normalizeState=True, numRepeatsTerminalLearning=10, accumulateHistory=True, withConvolution=True, includeEmbedding=False):
 
-        super(DQN_PARAMS, self).__init__(stateSize=stateSize, numActions=numActions, discountFactor=discountFactor, 
-                                        maxReplaySize=maxReplaySize, minReplaySize=minReplaySize, numTrials2Learn=numTrials2Learn, numTrials2Save=numTrials2Save)
+        super(DQN_PARAMS, self).__init__(frameSize=frameSize, gameVarsSize=gameVarsSize, numActions=numActions, discountFactor=discountFactor, 
+                                        maxReplaySize=maxReplaySize, minReplaySize=minReplaySize, numTrials2Learn=numTrials2Learn, 
+                                        numTrials2Save=numTrials2Save, withConvolution=withConvolution, includeEmbedding=includeEmbedding)
         
 
         self.learning_rate = learning_rate
         self.nn_Func = nn_Func
         self.batchSize = batchSize
+        self.epochSize = maxReplaySize
 
         self.outputGraph = outputGraph
         
@@ -48,37 +50,14 @@ class DQN_PARAMS(ParamsBase):
         self.noiseOnTerminalRewardsPct = 0.0
         self.numRepeatsTerminalLearning = numRepeatsTerminalLearning
 
+        self.includeEmbedding = includeEmbedding
+
     def ExploreProb(self, numRuns, resultRatio = 1):
         if self.descendingExploration:
             return self.explorationProb + (1 - self.explorationProb) * np.exp(-self.exploreChangeRate * resultRatio * numRuns)
         else:
             return self.explorationProb
 
-class DQN_EMBEDDING_PARAMS(DQN_PARAMS):
-    def __init__(self, stateSize, embeddingInputSize, numActions, numTrials2CmpResults=1000, nn_Func=None, outputGraph=False, numTrials2Learn=None, numTrials2Save=100, 
-                discountFactor=0.95, batchSize=32, maxReplaySize=500000, minReplaySize=1000, explorationProb=0.1, descendingExploration=True, 
-                exploreChangeRate = 0.0005, accumulateHistory=True):
-        
-        super(DQN_EMBEDDING_PARAMS, self).__init__(stateSize=stateSize, numActions=numActions, numTrials2CmpResults=numTrials2CmpResults, nn_Func=nn_Func, 
-                                                    outputGraph=outputGraph, discountFactor=discountFactor, batchSize=batchSize, maxReplaySize=maxReplaySize, minReplaySize=minReplaySize, 
-                                                    explorationProb=explorationProb, descendingExploration=descendingExploration, exploreChangeRate=exploreChangeRate, 
-                                                    accumulateHistory=accumulateHistory, numTrials2Learn=numTrials2Learn, numTrials2Save=numTrials2Save)
-        
-        self.embeddingInputSize = embeddingInputSize
-        self.type = "DQN_Embedding"
-        
-class DQN_PARAMS_WITH_DEFAULT_DM(DQN_PARAMS):
-    def __init__(self, stateSize, numActions, numTrials2CmpResults = 1000, nn_Func = None, outputGraph = False, numTrials2Learn=None, numTrials2Save=100, 
-                discountFactor = 0.95, batchSize = 32, maxReplaySize = 500000, minReplaySize = 1000, explorationProb = 0.1, descendingExploration = True, 
-                exploreChangeRate = 0.0005, layersNum = 1, neuronsInLayerNum = 256, accumulateHistory=True):
-        
-        super(DQN_PARAMS_WITH_DEFAULT_DM, self).__init__(stateSize=stateSize, numActions=numActions, numTrials2CmpResults=numTrials2CmpResults, nn_Func=nn_Func, layersNum=layersNum, neuronsInLayerNum=neuronsInLayerNum,
-                                                    outputGraph=outputGraph, discountFactor=discountFactor, batchSize=batchSize, maxReplaySize=maxReplaySize, minReplaySize=minReplaySize, 
-                                                    explorationProb=explorationProb, descendingExploration=descendingExploration, exploreChangeRate=exploreChangeRate, 
-                                                    accumulateHistory=accumulateHistory, numTrials2Learn=numTrials2Learn, numTrials2Save=numTrials2Save)
-
-        self.defaultDecisionMaker = None
-        self.type = "DQN_With_Default"
 
 
 class DQN:
@@ -87,7 +66,9 @@ class DQN:
         self.params = modelParams
 
         # Network Parameters
-        self.num_input = modelParams.stateSize
+        self.frameSize = modelParams.frameSize
+        self.gameVarsSize = modelParams.gameVarsSize
+
         self.numActions = modelParams.numActions
 
         self.directory = nnDirectory
@@ -97,7 +78,9 @@ class DQN:
 
         self.dqnScope = "DQNetwork"
      
-        self.inputLayer = tf.placeholder("float", [None, self.num_input], name="state") 
+        self.frameLayer = tf.placeholder(tf.float32, shape=[None] + list(self.frameSize) + [1], name="frameLayer") 
+        if self.gameVarsSize > 0:
+            self.gameVarsLayer = tf.placeholder(tf.float32, shape=[None, self.gameVarsSize] , name="gameVars") 
         self.actionSelected = tf.placeholder(shape=[None], dtype=tf.int32, name="actions")
 
         self.outputSingle = tf.placeholder(shape=[None], dtype=tf.float32, name="value")
@@ -106,10 +89,7 @@ class DQN:
             self.numRuns =tf.get_variable("numRuns", shape=(), initializer=tf.zeros_initializer(), dtype=tf.int32)
 
             # Construct network
-            if modelParams.type == "DQN_Embedding":
-                self.outputLayer = self.build_dqn_withEmbedding(modelParams.nn_Func)
-            else:
-                self.outputLayer = self.build_dqn(modelParams.nn_Func)
+            self.outputLayer = self.build_dqn()
 
         with tf.variable_scope("action_prediction"):
             batch_size = tf.shape(self.actionSelected)[0]
@@ -148,43 +128,42 @@ class DQN:
         return loadedDM
 
     # Define the neural network
-    def build_dqn(self, NN_Func):
-        if NN_Func != None:
-            return NN_Func(self.inputLayer, self.numActions)   
+    def build_dqn(self):
+        if self.params.withConvolution:
+            # Add 2 convolutional layers with ReLu activation
+            self.conv1 = tf.contrib.layers.convolution2d(self.frameLayer, num_outputs=8, kernel_size=[6, 6], stride=[3, 3],
+                                                    activation_fn=tf.nn.relu,
+                                                    weights_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
+                                                    biases_initializer=tf.constant_initializer(0.1))
+            
+            self.conv2 = tf.contrib.layers.convolution2d(self.conv1, num_outputs=8, kernel_size=[3, 3], stride=[2, 2],
+                                                    activation_fn=tf.nn.relu,
+                                                    weights_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
+                                                    biases_initializer=tf.constant_initializer(0.1))
+            
+            self.convOut = tf.contrib.layers.flatten(self.conv2)
+            currInput = self.convOut
+        else:
+            currInput = self.frameLayer
 
-        # with tf.variable_scope(self.scope + "/" + scope):
-        currInput = self.inputLayer
-        for i in range(self.params.layersNum):
+        for _ in range(self.params.layersNum):
             fc = tf.contrib.layers.fully_connected(currInput, self.params.neuronsInLayerNum)
-            currInput = fc
+            currInput = fc   
 
-        output = tf.contrib.layers.fully_connected(currInput, self.numActions, activation_fn = tf.nn.sigmoid) * 2 - 1
+        self.nnOut = currInput
+        if self.params.gameVarsSize > 0 and self.params.includeEmbedding:
+            # todo: change embedding layer connected layer
+            embeddingInput = self.gameVarsLayer / 10
+            # for _ in range(self.params.layersNum):
+            #     fc = tf.contrib.layers.fully_connected(embeddingInput, self.params.neuronsInLayerNum)
+            #     embeddingInput = fc   
+
+            self.embeddingOut = embeddingInput
+            currInput = tf.concat([currInput, embeddingInput], axis = 1)
+            self.nnLast = currInput
         
-        return output
+        return tf.contrib.layers.fully_connected(currInput, self.numActions, activation_fn = tf.nn.sigmoid) * 2 - 1
 
-    # Define the neural network
-    def build_dqn_withEmbedding(self, NN_Func):
-        
-        embedSize = self.params.embeddingInputSize
-        restSize = self.params.stateSize - embedSize
-        
-        embeddingInput = tf.slice(self.inputLayer, [0,0], [-1,embedSize])
-        otherInput = tf.slice(self.inputLayer, [0,embedSize], [-1,restSize])
-        
-        if NN_Func != None:
-            return NN_Func(embeddingInput, otherInput, self.numActions)   
-
-
-        embeddingOut = tf.contrib.layers.fully_connected(embeddingInput, 256)
-        currInput = tf.concat([embeddingOut, otherInput], axis = 1)
-
-        for i in range(self.params.layersNum):
-            fc = tf.contrib.layers.fully_connected(currInput, self.params.neuronsInLayerNum)
-            currInput = fc        
-
-        output = tf.contrib.layers.fully_connected(currInput, self.numActions, activation_fn = tf.nn.sigmoid) * 2 - 1
-
-        return output
 
     def RegularizationFactor(self):
         return 0
@@ -195,10 +174,30 @@ class DQN:
     def TargetExploreProb(self):
         return self.ExploreProb()    
 
+    def State2Frames(self, s, size=1):
+        shape = (size,) + self.frameSize + (1,)
+        sFrame = s[0].reshape(shape)
+        return sFrame
+    
+    def State2FramesByIdx(self, s, idx):
+        size = len(idx)
+        shape = (size,) + self.frameSize + (1,)
+        sFrame = s[0][idx].reshape(shape)
+        return sFrame 
+    
+    def State2Vars(self, s, size=1):
+        sVars = s[1].reshape(size, self.gameVarsSize)
+        return sVars
+    
+    def State2VarsByIdx(self, s, idx):
+        size = len(idx)
+        sVars = s[1][idx].reshape(size, self.gameVarsSize)
+        return sVars 
+
     def choose_action(self, state, validActions, targetValues=False):
         if np.random.uniform() > self.params.ExploreProb(self.numRuns.eval(session = self.sess)):
-            vals = self.outputLayer.eval({self.inputLayer: state.reshape(1,self.num_input)}, session=self.sess).squeeze()
-
+            
+            vals = self.ActionsValues(state, validActions, targetValues)
             maxArgs = np.argwhere(vals == np.amax(vals[validActions]))
             maxArgsValid = np.array([x for x in maxArgs if x in validActions]).squeeze(axis=1)
             a = np.random.choice(maxArgsValid)      
@@ -209,23 +208,44 @@ class DQN:
 
 
     def ActionsValues(self, state, validActions, targetValues = False):
-        allVals = self.outputLayer.eval({self.inputLayer: state.reshape(1,self.num_input)}, session=self.sess)
-        return allVals[0]
+        sFrame = self.State2Frames(state)
+        if self.gameVarsSize > 0:
+            sVars = self.State2Vars(state)
+            feedDict = {self.frameLayer: sFrame, self.gameVarsLayer: sVars}
+            allVals = self.outputLayer.eval(feedDict, session=self.sess)
+        else:
+            feedDict = {self.frameLayer: sFrame}
+
+            allVals = self.outputLayer.eval(feedDict, session=self.sess)
+        return allVals.squeeze()
 
     def learn(self, s, a, r, s_, terminal, numRuns2Save = None):          
         size = len(a)
-
         if self.params.noiseOnTerminalRewardsPct > 0:
             r = self.NoiseOnTerminalReward(r, terminal)
         
         # calculate (R = r + d * Q(s_))
-        rNextState = self.outputLayer.eval({self.inputLayer: s_.reshape(size,self.num_input)}, session=self.sess)
+
+        sFrame = self.State2Frames(s, size)
+        s_Frame = self.State2Frames(s_, size)
+        if self.gameVarsSize > 0:
+            sVars = self.State2Vars(s, size)
+            s_Vars = self.State2Vars(s_, size)
+
+            rNextState = self.outputLayer.eval({self.frameLayer: s_Frame, self.gameVarsLayer: s_Vars}, session=self.sess).squeeze()
+        else:
+            rNextState = self.outputLayer.eval({self.frameLayer: s_Frame}, session=self.sess).squeeze()
+        
         R = r + np.invert(terminal) * self.params.discountFactor * np.max(rNextState, axis=1)
+
 
         for i in range(int(size  / self.params.batchSize)):
             chosen = np.arange(i * self.params.batchSize, (i + 1) * self.params.batchSize)
-            feedDict = {self.inputLayer: s[chosen].reshape(self.params.batchSize, self.num_input), self.outputSingle: R[chosen], self.actionSelected: a[chosen]}
-
+            if self.gameVarsSize > 0:
+                feedDict = {self.frameLayer: sFrame[chosen], self.gameVarsLayer: sVars[chosen], self.outputSingle: R[chosen], self.actionSelected: a[chosen]}
+            else:
+                feedDict = {self.frameLayer: sFrame[chosen], self.outputSingle: R[chosen], self.actionSelected: a[chosen]}
+            
             self.sess.run([self.train_op, self.loss_op], feed_dict=feedDict) 
 
 
@@ -330,11 +350,8 @@ class DQN_WithTarget(DQN):
             self.numRunsTarget =tf.get_variable("numRuns_target", shape=(), initializer=tf.zeros_initializer(), dtype=tf.int32)
             self.valueTarget =tf.get_variable("value_target", shape=(), initializer=tf.constant_initializer(-100.0), dtype=tf.float32)
 
-            # Construct target network
-            if modelParams.type == "DQN_Embedding":
-                self.targetOutput = self.build_dqn_withEmbedding(modelParams.nn_Func)
-            else:
-                self.targetOutput = self.build_dqn(modelParams.nn_Func)
+            self.targetOutput = self.build_dqn()
+                
 
         self.rewardHist = []
         if isMultiThreaded:
@@ -383,9 +400,10 @@ class DQN_WithTarget(DQN):
     def choose_action(self, state, validActions, targetValues=False):
         if targetValues:   
             if np.random.uniform() > self.TargetExploreProb():
-                vals = self.targetOutput.eval({self.inputLayer: state.reshape(1,self.num_input)}, session=self.sess)
+                
+                vals = self.ActionsValues(state, validActions, targetValues)
 
-                maxArgs = list(np.argwhere(vals[0] == np.amax(vals[0][validActions]))[0])
+                maxArgs = list(np.argwhere(vals == np.amax(vals[validActions]))[0])
                 maxArgsValid = [x for x in maxArgs if x in validActions]
                 action = np.random.choice(maxArgsValid)      
             else:
@@ -397,8 +415,15 @@ class DQN_WithTarget(DQN):
 
     def ActionsValues(self, state, validActions, targetValues = False):
         if targetValues:
-            allVals = self.targetOutput.eval({self.inputLayer: state.reshape(1,self.num_input)}, session=self.sess)
-            return allVals[0]
+            sFrame = self.State2Frames(state)
+            if self.gameVarsSize > 0:
+                sVars = self.State2Vars(state)
+                feedDict = {self.frameLayer: sFrame, self.gameVarsLayer: sVars}
+                allVals = self.outputLayer.eval(feedDict, session=self.sess)
+            else:
+                feedDict = {self.frameLayer: sFrame}
+                allVals = self.outputLayer.eval(feedDict, session=self.sess)
+            return allVals.squeeze()
         else:
             return super(DQN_WithTarget, self).ActionsValues(state, targetValues)
 
@@ -449,100 +474,3 @@ class DQN_WithTarget(DQN):
     def DecisionMakerType(self):
         return "DQN_WithTarget"
         
-
-class DQN_WithTargetAndDefault(DQN_WithTarget):
-    def __init__(self, modelParams, nnName, nnDirectory, isMultiThreaded = False, agentName = ""):
-        super(DQN_WithTargetAndDefault, self).__init__(modelParams=modelParams, nnName=nnName, nnDirectory=nnDirectory, isMultiThreaded=isMultiThreaded, agentName=agentName)
-
-        self.defaultDecisionMaker = modelParams.defaultDecisionMaker
-        self.rewardHistDefault = []
-        self.trialsOfDfltRun = modelParams.numTrials2CmpResults
-        
-        if isMultiThreaded:
-            self.rewardHistDfltLock = Lock()
-        else:
-            self.rewardHistDfltLock = EmptyLock()
-
-        self.defaultScope = "dflt_dm"
-        self.initValDflt = 1000.0
-        with tf.variable_scope(self.defaultScope):
-            self.valueDefaultDm =tf.get_variable("value_dflt", shape=(), initializer=tf.constant_initializer(self.initValDflt), dtype=tf.float32)
-
-        self.init_op = tf.global_variables_initializer()
-        self.sess.run(self.init_op)  
-
-            
-
-    def choose_action(self, state, validActions, targetValues=False):
-        if targetValues:
-            if self.ValueDefault() > self.ValueTarget():
-                return self.defaultDecisionMaker.choose_action(state, validActions, targetValues)
-            else:
-                return super(DQN_WithTargetAndDefault, self).choose_action(state, validActions, targetValues)
-        else:
-            if self.ValueDefault() == self.initValDflt:
-                super(DQN_WithTargetAndDefault, self).choose_action(state, validActions)
-            else:
-                self.defaultDecisionMaker.choose_action(state, validActions)
-    
-    def ValueDefault(self):
-        return self.valueDefaultDm.eval(session = self.sess)
-
-    def ActionsValues(self, state, validActions, targetValues = False):
-        if targetValues:
-            if self.ValueDefault() > self.ValueTarget():
-                return self.defaultDecisionMaker.ActionsValues(state, targetValues)
-            else:
-                return super(DQN_WithTargetAndDefault, self).ActionsValues(state, targetValues)
-        else:
-            if self.ValueDefault() == self.initValDflt:
-                return self.defaultDecisionMaker.ActionsValues(state, targetValues)
-            else:
-                return super(DQN_WithTargetAndDefault, self).ActionsValues(state, targetValues)
-
-    def ExploreProb(self):
-        if self.ValueDefault() == self.initValDflt:
-            return 0.0
-        else:
-            return super(DQN_WithTargetAndDefault, self).ExploreProb()
-
-    def end_run(self, r, toSave = False):
-        if self.ValueDefault() == self.initValDflt:
-            self.rewardHistDfltLock.acquire()
-            
-            self.rewardHistDefault.append(r)
-            if len(self.rewardHistDefault) >= self.trialsOfDfltRun:
-                avgReward = np.average(np.array(self.rewardHistDefault))
-                assign = self.valueDefaultDm.assign(avgReward)
-                self.sess.run(assign)
-                self.Save()
-            
-            self.rewardHistDfltLock.release()
-            
-            print("\t", threading.current_thread().getName(), " : take default dm value #", len(self.rewardHistDefault))
-        else:
-            super(DQN_WithTargetAndDefault, self).end_run(r, toSave)
-
-    def DecisionMakerType(self):
-        return "DQN_WithTargetAndDefault"
-    
-    def TakeDfltValues(self):
-        return self.ValueDefault() > self.ValueTarget()
-    
-    def NumDfltRuns(self):
-        return len(self.rewardHistDefault)
-    
-    def DfltValueInitialized(self):
-        return self.ValueDefault() != self.initValDflt
-
-    def actionValuesSpecific(self, state, dmId): # dmId = dflt, target, curr
-        if dmId == "dflt":
-            return self.defaultDecisionMaker.ActionsValues(state)
-        else:
-            return super(DQN_WithTargetAndDefault, self).actionValuesSpecific(state, dmId)
-
-            
-# class CopyDqn:
-#     def __init__(self, argListFrom, argListTo):
-#         self.sess = tf.Session()
-#         argListFrom["params"].tfSession = self.sess

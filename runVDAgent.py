@@ -1,55 +1,41 @@
 #!/usr/bin/python3
 
-# run example: python .\runSC2Agent.py --map=Simple64 --runDir=NaiveRunDiff2 --trainAgent=super --train=True
-# kill all sc ps:  $ Taskkill /IM SC2_x64.exe /F
-
 import logging
 import traceback
 
 import os
 import sys
 import threading
-from multiprocessing import Pool                                                
-import time
+
 import tensorflow as tf
-import collections
+
 from absl import app
 from absl import flags
-import math
-import numpy as np
 
-from pysc2.env import run_loop
-from pysc2.env import sc2_env
-
-# all independent agents available
 from agent_super import SuperAgent
-
-from utils import SC2_Params
-from utils_plot import create_nnGraphs
 
 from paramsCalibration import GeneticProgrammingGeneration
 from paramsCalibration import ReadGPFitness
 from paramsCalibration import TrainSingleGP
-
-# agent possible to run calibration
-from agent_army_attack import CreateDecisionMakerArmyAttack
-from agent_army_attack import GetRunTypeArmyAttack
-
-RUN = True
-
-MAX_NUM_OF_TEST_SIMULTANEOUSLY = 4
-NUM_CRASHES = 0
-
-NUM_CRASHES_2_RESTART = 5
-
-RENDER = False
-SCREEN_SIZE = SC2_Params.SCREEN_SIZE
-MINIMAP_SIZE = SC2_Params.MINIMAP_SIZE
+from paramsCalibration import GetPopulationDict
+from paramsCalibration import SetPopulationTrained
 
 # general params
-flags.DEFINE_string("act", "run", "what to  act: options =[run, check, copyNN, gp]") 
+flags.DEFINE_string("act", "run", "what to  act: options =[run, check, copyNN, gp, play]") 
 flags.DEFINE_string("device", "gpu", "Which device to run nn on.")
 flags.DEFINE_string("runDir", "none", "directory of the decision maker (should contain config file name config.txt)")
+
+# run params
+flags.DEFINE_string("playAgent", "none", "Which agent to train.")
+flags.DEFINE_string("trainAgent", "none", "Which agent to train.")
+flags.DEFINE_string("testAgent", "none", "Which agent to test.")
+flags.DEFINE_string("map", "simpler_basic", "Which map to run.")
+flags.DEFINE_string("numRuns", "1", "num of game threads.")
+flags.DEFINE_string("numEpisodes", "none", "num of episodes agent to run.")
+flags.DEFINE_string("resetModel", "False", "if to reset data(dm params, history and results)")
+
+# play params
+flags.DEFINE_string("copy2Play", "none", "which dm copy to play")
 
 # params for genetic programming
 flags.DEFINE_string("gpAct", "trainPopulation", "train population or test single individual")
@@ -59,46 +45,34 @@ flags.DEFINE_string("numGenerations", "20", "num generations to run")
 flags.DEFINE_string("populationIdx", "none", "which idx of population to test or train")
 flags.DEFINE_string("populationInstanceIdx", "none", "which instance of individual to test or train")
 
-# for run:
-flags.DEFINE_string("testAgent", "none", "Which agent to test.")
-flags.DEFINE_string("trainAgent", "none", "Which agent to train.")
-flags.DEFINE_string("playAgent", "none", "Which agent to play.")
-flags.DEFINE_string("map", "none", "Which map to run.")
-flags.DEFINE_string("numSteps", "0", "num steps of map.")
-flags.DEFINE_string("numGameThreads", "1", "num of game threads.")
-flags.DEFINE_string("numEpisodes", "none", "num of episodes agent to run.")
+#check params
+flags.DEFINE_string("copy2Check", "none", "which dm copy to check")
 
-# for check:
-flags.DEFINE_string("checkAgent", "none", "Which agent to check.")
-flags.DEFINE_string("fromDir", "none", "directory of the decision maker to copy from (should contain config file name config.txt)")
-flags.DEFINE_string("stateIdx2Check", "0,1", "Which agent to check.")
-flags.DEFINE_string("actions2Check", "0", "Which agent to check.")
-flags.DEFINE_string("plot", "False", "Which agent to check.")
+MAP_PATH = "./../ViZDoom/scenarios/"
+MAP_END_FNAME = ".cfg"
 
-flags.DEFINE_string("resetModel", "False", "if to reset data(dm params, history and results)")
-
-# for copy network
-flags.DEFINE_string("copyAgent", "none", "Which agent to copy.")
-
-nonRelevantRewardMap = ["BaseMngr"]
-singlePlayerMaps = ["ArmyAttack5x5", "AttackBase", "AttackMngr"]
-
-def start_agent(configDict=None, copy2Run=None, threadName="Thread"):
-    """Starts the pysc2 agent."""
-    
+def runAgent(sess, agent, numEpisodes):
+    with sess.as_default(), sess.graph.as_default():  
+        if numEpisodes == None:
+            while True:
+                agent.RunEpisode()
+        else:
+            for _ in range(numEpisodes):
+                agent.RunEpisode()
+ 
+def startRun(configDict=None, copy2Run=None, threadName="Thread", numEpisodes=None):
     # if configDict is not argument read it from file
     if configDict == None:
         configDictOrg = eval(open("./" + flags.FLAGS.runDir + "/config.txt", "r+").read())
         configDict = configDictOrg.copy()
         configDict["directory"] = flags.FLAGS.runDir
-
-    # parse list of agent participating in session
+    
     trainList = flags.FLAGS.trainAgent
     trainList = trainList.split(",")
 
     testList = flags.FLAGS.testAgent
     testList = testList.split(",")
-    
+        
     training = trainList != ["none"]
 
     if flags.FLAGS.playAgent == "none":
@@ -111,24 +85,12 @@ def start_agent(configDict=None, copy2Run=None, threadName="Thread"):
     print("train list =", trainList)
     print("test list =", testList, "\n\n\n")
 
-    # parse params from flags and configDict
 
-    if flags.FLAGS.numEpisodes == "none":
-        numEpisodes = None
-    else:
-        numEpisodes = int(flags.FLAGS.numEpisodes)
-
-    if "numRun" in configDict.keys():
-        numRun = configDict["numRun"]
-    else:
-        numRun = None
-
-    if "numGameThreads" in configDict.keys():
-        numDmThreads = configDict["numGameThreads"]
-    else:
-        numDmThreads = int(flags.FLAGS.numGameThreads)
-
-    numGameThreads = numDmThreads if training else 1
+    if numEpisodes == None:
+        if flags.FLAGS.numEpisodes == "none":
+            numEpisodes = None
+        else:
+            numEpisodes = int(flags.FLAGS.numEpisodes)
 
     if "sharedDM" in configDict.keys():
         sharedDM = configDict["sharedDM"]
@@ -136,127 +98,43 @@ def start_agent(configDict=None, copy2Run=None, threadName="Thread"):
         sharedDM = True
 
 
+    numRuns = int(flags.FLAGS.numRuns)
+    if "mapName" in configDict.keys():
+        mapFullName = MAP_PATH + configDict["mapName"] + MAP_END_FNAME
+    else:
+        mapFullName = MAP_PATH + flags.FLAGS.map + MAP_END_FNAME
     
-    isPlotThread = eval(flags.FLAGS.plot)
-    
-    isMultiThreaded = numGameThreads > 1
-    useMapRewards = flags.FLAGS.map not in nonRelevantRewardMap
-
-    difficulty = int(configDict["difficulty"])
-    players = [sc2_env.Agent(race=sc2_env.Race.terran)]
-    if flags.FLAGS.map not in singlePlayerMaps:
-        players.append(sc2_env.Bot(race=sc2_env.Race.terran, difficulty=difficulty))
-
-    allDecisionMakers = []
-    decisionMaker = None
+    configDict["mapPath"] = mapFullName
+    threads = []
     agents = []
-    for i in range(numDmThreads + isPlotThread):
-        if copy2Run != None:
-            dmCopy = copy2Run
-        else:
-            if not sharedDM:
-                dmCopy = i
-            else:
-                dmCopy = numRun
-
-        print("\n\n\n init decision maker instance #", i, "\n\n\n")
-        agent = SuperAgent(decisionMaker=decisionMaker, isMultiThreaded=isMultiThreaded, configDict=configDict, playList=playList, trainList=trainList, testList=testList, useMapRewards=useMapRewards, dmCopy=dmCopy)
-        
-        if not sharedDM:
-            allDecisionMakers.append(agent.GetDecisionMaker())
-        elif i == 0:
-            decisionMaker = agent.GetDecisionMaker()
-            allDecisionMakers.append(decisionMaker)
-
+    for i in range(numRuns):
+        print("\n\n\n init dm #", i, "\n\n\n")
+        agent = SuperAgent(configDict, None, trainList, playList, dmCopy=i)
         agents.append(agent)
 
     with tf.Session() as sess:
-        # create savers
-        resetModel = eval(flags.FLAGS.resetModel)
-        for dm in allDecisionMakers:
-            dm.InitModel(sess, resetModel)
+        for i in range(numRuns):
+            agent = agents[i]
+            decisionMaker = agent.GetDecisionMaker()
+            # create savers
+            resetModel = eval(flags.FLAGS.resetModel)
+            decisionMaker.InitModel(sess, resetModel)
 
-        threads = []        
-
-        numSteps = int(flags.FLAGS.numSteps)
-
-        idx = 0
-        for i in range(numGameThreads):
-            print("\n\n\n init game thread #", i, "\n\n\n")
-
-            thread_args = (agents[i], sess, RENDER, players, numSteps)
-            t = threading.Thread(target=run_thread, args=thread_args, daemon=True)
-            t.setName( "Game" + threadName + "_" + str(idx))
-
+            threadArgs = (sess, agent, numEpisodes)
+            t = threading.Thread(target=runAgent, args=threadArgs, daemon=True)
+            t.setName( "Game" + threadName + "_" + str(i))
             threads.append(t)
-            t.start()
-            time.sleep(5)
-            idx += 1
-
-
-        numTrials2Learn = [-1]
-        if isPlotThread:
-            dir2Save = "./" + configDict["directory"] + "/nnGraphs/"
-            if not os.path.isdir(dir2Save):
-                os.makedirs(dir2Save)
-            thread_args = (agents[numGameThreads], trainList[0], dir2Save, numTrials2Learn)
-            t = threading.Thread(target=plot_thread, args=thread_args, daemon=True)
-            t.setName("PlotThread")
-            threads.append(t)
-            t.start()
-
-
-        contRun = True
-        threading.current_thread().setName("Train" + threadName)
         
+        for t in threads:   
+            t.start()
 
-        while contRun:
-            # train  when flag of training is on
-            for dm in allDecisionMakers:
-                numTrials = dm.TrainAll()
-                if numTrials >= 0:
-                    numTrials2Learn[0] = numTrials
+        for t in threads:
+            t.join()
 
-            time.sleep(0.5)
-            
-            # if at least one thread is alive continue running
-            contRun = False
 
-            for t in threads:
-                isAlive = t.isAlive()
-                if isAlive:
-                    contRun = True
-                else:
-                    t.join() 
-
-            if numEpisodes != None:
-                minRuns = numEpisodes + 1
-                for dm in allDecisionMakers:
-                    if trainList[0] != "none":
-                        dmAgent = dm.GetDecisionMakerByName(trainList[0])
-                        minRuns = min(dmAgent.NumRuns(), minRuns)
-                    else:
-                        dmAgent = dm.GetDecisionMakerByName(testList[0])
-                        minRuns = min(dmAgent.NumTestRuns(), minRuns)
-                
-                if minRuns > numEpisodes:
-                    if "numRun" in configDict:
-                        print("\n\nending run #", configDict["numRun"], "!!!\n\n") 
-                        configDictOrg["numRun"] += 1
-                        open("./" + flags.FLAGS.runDir + "/config.txt", "w+").write(str(configDictOrg))
-                    if testList[0] != "none":
-                        dm.GetDecisionMakerByName(testList[0]).Save()
-
-                    contRun = False
-
-def run_script(gpActArg, populationIdx, instanceIdx):     
-    cmd = ' '.join(sys.argv)
-    cmd.replace(".\\", "")                                                        
-    os.system('python {}'.format(cmd + " --gpAct=" + gpActArg + " --populationIdx=" + str(populationIdx) + " --populationInstanceIdx=" + str(instanceIdx)))    
 
 def run_gp_threads(populationSize, numInstances, gpActArg):
-    numThreadsRunning = 10
-    numOfTerminals2KillGame = 10
+    numThreadsRunning = 8
 
     threadsB4Run = []  
     for idx in range(populationSize):
@@ -264,7 +142,6 @@ def run_gp_threads(populationSize, numInstances, gpActArg):
             t = threading.Thread(target=run_script, args=(gpActArg, idx, instance))
             threadsB4Run.append(t)
     
-    numTerminal = 0
     runningThreads = []
 
     while len(threadsB4Run) > 0 or len(runningThreads) > 0:
@@ -275,15 +152,9 @@ def run_gp_threads(populationSize, numInstances, gpActArg):
 
         for t in runningThreads:
             if not t.isAlive():
-                numTerminal += 1
                 runningThreads.remove(t)
 
-        if numTerminal >= numOfTerminals2KillGame and gpActArg == "testSingle":
-            os.system('"Taskkill /IM SC2_x64.exe /F"')
-            numTerminal = 0
-    
-    if gpActArg == "testSingle":
-        os.system('"Taskkill /IM SC2_x64.exe /F"')     
+
             
 def gp_train(): 
     print("\n\n\ntrain gp\n\n\n")
@@ -297,22 +168,33 @@ def gp_train():
 
     trainAgent = flags.FLAGS.testAgent
 
-    if trainAgent == "army_attack":
-        runType = GetRunTypeArmyAttack(configDict)
+    if trainAgent == "VDAgent":
+        runType = GetRunTypeVDAgent(configDict)
 
+    populationDict, currGeneration = GetPopulationDict(configDict["directory"])
+    
+    while currGeneration != numGenerations:
 
-    for gen in range(numGenerations):
+        # advance to next generation (in case current population has fitness or this is the first population)
+        if "fitness" in populationDict or populationDict == {}:
+            print("\n\n\ncreate population generation #", currGeneration, "\n\n\n")
+            GeneticProgrammingGeneration(populationSize, numPopulationInstances, configDict, runType)
+            populationDict, currGeneration = GetPopulationDict(configDict["directory"])
 
-        print("\n\n\ncreate population generation #", gen, "\n\n\n")
-        GeneticProgrammingGeneration(populationSize, numPopulationInstances, configDict, runType)
+        # train generation (if not trained)
+        if "trained" not in populationDict:
+            print("\n\n\ntrain population generation #", currGeneration, "\n\n\n")
+            run_gp_threads(populationSize, numPopulationInstances, "trainSingle")
+            SetPopulationTrained(configDict["directory"])
 
-        print("\n\n\ntrain population generation #", gen, "\n\n\n")
-        run_gp_threads(populationSize, numPopulationInstances, "trainSingle")
+        # test generation
+        if "fitness" not in populationDict:
+            print("\n\n\ntest population generation #", currGeneration, "\n\n\n")
+            run_gp_threads(populationSize, numPopulationInstances, "testSingle")
+            # calculate generation fitness
+            ReadGPFitness(configDict, runType)
+            populationDict, currGeneration = GetPopulationDict(configDict["directory"])
 
-        print("\n\n\ntest population generation #", gen, "\n\n\n")
-        run_gp_threads(populationSize, numPopulationInstances, "testSingle")
-
-        ReadGPFitness(configDict, runType)
 
 
 def getGP_Params(population, params2Calibrate, populationIdx, instanceIdx):
@@ -343,14 +225,14 @@ def gp_train_single():
 
     configDict["hyperParams"] = paramDict
     
-    trainAgent = flags.FLAGS.testAgent
-    if trainAgent == "army_attack":
-        dmInitFunc = CreateDecisionMakerArmyAttack
-        runType = GetRunTypeArmyAttack(configDict)
-
     threading.current_thread().setName("TrainSingle_" + str(populationIdx) + "_" + str(instance2Train))
+    if "hundredsTrainEpisodes" in paramDict:
+        numEpisodes = paramDict["hundredsTrainEpisodes"] * 100
+    else:
+        numEpisodes = None
 
-    TrainSingleGP(configDict, runType, dmInitFunc, dirsCopy2Run)
+    startRun(configDict, dirsCopy2Run, threadName="train_pop#" + str(populationIdx) + "_" + str(instance2Train), numEpisodes=numEpisodes)
+
 
 def gp_test_single(): 
     populationIdx = int(flags.FLAGS.populationIdx)
@@ -371,129 +253,72 @@ def gp_test_single():
     configDict["hyperParams"] = paramDict
     configDict["numGeneration"] = gpPopulation["numGeneration"]
 
-    start_agent(configDict, dirsCopy2Run, threadName="pop#" + str(populationIdx) + "_" + str(instance2Train))
+    startRun(configDict, dirsCopy2Run, threadName="test_pop#" + str(populationIdx) + "_" + str(instance2Train))
+
+def Play():
+    configDictOrg = eval(open("./" + flags.FLAGS.runDir + "/config.txt", "r+").read())
+    configDict = configDictOrg.copy()
+    configDict["directory"] = flags.FLAGS.runDir    
+
+    testAgent = flags.FLAGS.testAgent
+
+    numEpisodes = int(flags.FLAGS.numEpisodes)
     
-def run_thread(agent, sess, display, players, numSteps):
-    """Runs an agent thread."""
+    if "mapName" in configDict.keys():
+        mapFullName = MAP_PATH + configDict["mapName"] + MAP_END_FNAME
+    else:
+        mapFullName = MAP_PATH + flags.FLAGS.map + MAP_END_FNAME
+    configDict["mapPath"] = mapFullName
 
-    with sess.as_default(), sess.graph.as_default():
+    copy2Play = None if flags.FLAGS.copy2Play == "none" else int(flags.FLAGS.copy2Play)
+    agent = SuperAgent(configDict, None, trainList=[], playList=[testAgent], dmCopy=copy2Play, playMode=True)
+    decisionMaker = agent.GetDecisionMaker()
 
-        while RUN:
-            try:
+    with tf.Session() as sess:
+        decisionMaker.InitModel(sess, resetModel=False)
+        for _ in range(numEpisodes):
+            agent.PlayEpisode()
 
-                agent_interface_format=sc2_env.AgentInterfaceFormat(feature_dimensions=sc2_env.Dimensions(screen=SCREEN_SIZE,minimap=MINIMAP_SIZE))
+        agent.Close()
 
-                with sc2_env.SC2Env(map_name=flags.FLAGS.map,
-                                    players=players,
-                                    game_steps_per_episode=numSteps,
-                                    agent_interface_format=agent_interface_format,
-                                    visualize=display) as env:
-                    run_loop.run_loop([agent], env)
-
-            
-            except Exception as e:
-                print(e)
-                print(traceback.format_exc())
-                logging.error(traceback.format_exc())
-            
-            # remove crahsed terminal history
-            # agent.RemoveNonTerminalHistory()
-
-            global NUM_CRASHES
-            NUM_CRASHES += 1
-
-def plot_thread(agent, agent2Train, dir2Save, numTrials2Learn):
-    statesIdx = flags.FLAGS.stateIdx2Check.split(",")
-    for i in range(len(statesIdx)):
-        statesIdx[i] = int(statesIdx[i])
-
-    actions2Check = flags.FLAGS.actions2Check.split(",")   
-    for i in range(len(actions2Check)):
-        actions2Check[i] = int(actions2Check[i])
-
-    while True:
-        if numTrials2Learn[0] >= 0:
-            numTrials = numTrials2Learn[0]
-            numTrials2Learn[0] = -1
-            create_nnGraphs(agent, agent2Train, statesIdx=statesIdx, actions2Check=actions2Check, numTrials=numTrials, saveGraphs=True, dir2Save = dir2Save)
-        time.sleep(1)
+def run_script(gpActArg, populationIdx, instanceIdx):     
+    cmd = ' '.join(sys.argv)
+    cmd.replace(".\\", "")                                                        
+    os.system('python {}'.format(cmd + " --gpAct=" + gpActArg + " --populationIdx=" + str(populationIdx) + " --populationInstanceIdx=" + str(instanceIdx)))    
 
 def check_model():
-    configDict = eval(open("./" + flags.FLAGS.runDir + "/config.txt", "r+").read())
+    configDictOrg = eval(open("./" + flags.FLAGS.runDir + "/config.txt", "r+").read())
+    configDict = configDictOrg.copy()
     configDict["directory"] = flags.FLAGS.runDir
 
-    checkList = flags.FLAGS.checkAgent.split(",")
-    sharedDM = True if "sharedDM" not in configDict.keys() else configDict["sharedDM"]
-    dmCopy = None if sharedDM else 0
-    superAgent = SuperAgent(configDict=configDict, dmCopy=dmCopy)
+    mapFullName = MAP_PATH + flags.FLAGS.map + MAP_END_FNAME
+    configDict["mapPath"] = mapFullName
 
-    print("\n\nagent 2 check:", checkList, end='\n\n')
+    trainAgent = flags.FLAGS.trainAgent
+    copy2Check = None if flags.FLAGS.copy2Check == "none" else int(flags.FLAGS.copy2Check)
+
+    agent = VDAgent(configDict, decisionMaker=None, dmCopy=copy2Check)
+    decisionMaker = agent.GetDecisionMaker()
     with tf.Session() as sess:
-        # create savers
-        decisionMaker = superAgent.GetDecisionMaker()
-        decisionMaker.InitModel(sess, resetModel=False)    
+        decisionMaker.InitModel(sess, resetModel=False)
+        s = decisionMaker.DrawStateFromHist(realState=True)
+        print("\nframe layer =", s[0])
+        print("\n\ngame vars =", s[1])
 
-        for agentName in checkList:
-            agent = superAgent.GetAgentByName(agentName)
-            plotGraphs = eval(flags.FLAGS.plot)
+        feedDict = {decisionMaker.decisionMaker.frameLayer: s[0]}
 
-            statesIdx = list(map(int, flags.FLAGS.stateIdx2Check.split(",")))
-            actions2Check = list(map(int, flags.FLAGS.actions2Check.split(",")))
-
-            withDfltVals = flags.FLAGS.runDir.find("Dflt") >= 0
-
-            agent = superAgent.GetAgentByName(agentName)
-            decisionMaker = agent.decisionMaker
-            decisionMaker.CheckModel(agent, plotGraphs=plotGraphs, withDfltModel=withDfltVals, statesIdx2Check=statesIdx, actions2Check=actions2Check)
-
-def copy_dqn():
-    configDictSource = eval(open("./" + flags.FLAGS.fromDir + "/config.txt", "r+").read())
-    configDictSource["directory"] = flags.FLAGS.fromDir
-
-    superAgentSource = SuperAgent(configDict = configDictSource)
-    decisionMakerSource = superAgentSource.GetDecisionMaker()    
-
-    configDictTarget = eval(open("./" + flags.FLAGS.runDir + "/config.txt", "r+").read())
-    configDictTarget["directory"] = flags.FLAGS.runDir
-    
-    superAgentTarget = SuperAgent(configDict = configDictTarget)
-    decisionMakerTarget = superAgentTarget.GetDecisionMaker()    
-    
-    copyList = flags.FLAGS.copyAgent
-    copyList = copyList.split(",")
-
-    for agent in copyList:
-        currDmSource = decisionMakerSource.GetDecisionMakerByName(agent)
-        currDmTarget = decisionMakerTarget.GetDecisionMakerByName(agent)
-
-        if currDmSource != None and currDmTarget != None:
-            allVarsSource, _ = currDmSource.decisionMaker.GetAllNNVars()
-            currDmTarget.decisionMaker.AssignAllNNVars(allVarsSource)
-            currDmTarget.decisionMaker.Save()
-        else:
-            print("Error in agent = ", agent)
-            print("source =", type(currDmSource))
-            print("target =", type(currDmTarget))
-
-       
+        conv1, conv2, convOut = sess.run([decisionMaker.decisionMaker.conv1, decisionMaker.decisionMaker.conv2, decisionMaker.decisionMaker.convOut], feed_dict=feedDict)
+        print("\n\nconvOut =", convOut)
+        print("\n\nshapes: \ninput frame =", s[0].shape, "conv1 =", conv1.shape, "conv2 =", conv2.shape, "convOut =", convOut.shape)
+      
 
 
-def main(argv):
-    """Main function.
-
-    This function check which agent was specified as command line parameter and launches it.
-
-    :param argv: empty
-    :return:
-    """
-
+def main(argv):    
     if flags.FLAGS.device == "cpu":
         # run from cpu
-        import os
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
         os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
-    ## create history of run commands text file
 
     modelDir = "./" + flags.FLAGS.runDir
     histCmdFName = modelDir + "/cmdHistory.txt"
@@ -505,22 +330,19 @@ def main(argv):
     else:
         open(histCmdFName, "a+").write("\n\n" + str(sys.argv))
 
-    ## call the act function
     if flags.FLAGS.act == "run":
-        start_agent()
+        startRun()
+    elif flags.FLAGS.act == "play":
+        Play()
     elif flags.FLAGS.act == "check":
         check_model()
-    elif flags.FLAGS.act == "copyNN":
-        copy_dqn()
     elif flags.FLAGS.act == "gp":
         if flags.FLAGS.gpAct == "trainPopulation":
             gp_train()
         elif flags.FLAGS.gpAct == "trainSingle":
             gp_train_single()
         elif flags.FLAGS.gpAct == "testSingle":
-            gp_test_single()
-
-
+            gp_test_single()   
 
 if __name__ == '__main__':
     print('Starting...')

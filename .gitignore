@@ -1,0 +1,7 @@
+*.gz
+*.pyc
+checkpoint
+*.index
+*.meta
+*.data*
+*events.out.*

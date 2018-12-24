@@ -7,6 +7,7 @@ import sys
 import threading
 import math
 
+from time import time
 import tensorflow as tf
 
 from multiprocessing import Lock
@@ -16,20 +17,48 @@ from utils import EmptyLock
 #decision makers
 from algo_dqn import DQN
 from algo_dqn import DQN_WithTarget
-from algo_dqn import DQN_WithTargetAndDefault
 
 from algo_a2c import A2C
 from algo_a3c import A3C
 
+from algo_orig import ORIG_MODEL
+
 from algo_qtable import QLearningTable
 
-from utils_history import HistoryMngr
+from utils_history import History
 
 # model builders:
 from utils_ttable import TransitionTable
 
 # results handlers
 from utils_results import ResultFile
+
+def CreateDecisionMaker(agentName, configDict, isMultiThreaded, dmCopy, heuristicClass=None):
+    from agentRunTypes import GetRunType    
+    from agentStatesAndActions import NumActions2Agent
+    from agentStatesAndActions import StatesParams2Agent
+
+    dmCopy = "" if dmCopy==None else "_" + str(dmCopy)
+
+    if configDict[agentName] == "none":
+        return BaseDecisionMaker(agentName), []
+
+    runType = GetRunType(agentName, configDict)
+
+    directory = configDict["directory"] + "/" + agentName + "/" + runType["directory"] + dmCopy
+
+    if configDict[agentName] == "heuristic":
+        decisionMaker = heuristicClass(resultFName=runType["results"], directory=directory)
+    else:        
+        numActions = NumActions2Agent(agentName)
+        stateParams = StatesParams2Agent(agentName)
+        dmClass = eval(runType["dm_type"])
+
+        decisionMaker = dmClass(modelType=runType["algo_type"], modelParams = runType["params"], decisionMakerName = runType["dm_name"], agentName=agentName,  
+                            resultFileName=runType["results"], historyFileName=runType["history"], directory=directory, isMultiThreaded=isMultiThreaded)
+
+    return decisionMaker, runType
+
 
 class BaseDecisionMaker:
     def __init__(self, agentName):
@@ -120,6 +149,9 @@ class BaseDecisionMaker:
         
     def GetResultFile(self):
         return self.secondResultFile
+
+    def GetHistoryInstance(self):
+        return self.historyMngr
 
     def Train(self):
         pass     
@@ -248,6 +280,8 @@ class DecisionMakerAlgoBase(BaseDecisionMaker):
         self.trial2LearnModel = -1
         # sync mechanism
         self.endRunLock = Lock() if isMultiThreaded else EmptyLock()
+        
+        self.printTrain = False
 
         # create directory        
         if directory != "":
@@ -263,33 +297,20 @@ class DecisionMakerAlgoBase(BaseDecisionMaker):
             self.resultFile = ResultFile(fullDirectoryName + resultFileName, modelParams.numTrials2Save, self.agentName)
         
         # create history mngr class
-        self.historyMngr = HistoryMngr(modelParams, historyFileName, fullDirectoryName, isMultiThreaded)
+        self.historyMngr = History(modelParams, historyFileName, fullDirectoryName, isMultiThreaded)
     	
         self.startScope = fullDirectoryName
         # create decision maker class
         decisionClass = eval(modelType)
+
         with tf.variable_scope(self.startScope):
             self.decisionMaker = decisionClass(modelParams, decisionMakerName, fullDirectoryName, isMultiThreaded=isMultiThreaded, agentName=self.agentName)
         
-    def AddHistory(self):
-        return self.historyMngr.AddHistory()
-
     def choose_action(self, state, validActions, targetValues=False):
-        if not self.decisionMaker.TakeDfltValues() and self.params.normalizeState:
-            state = self.historyMngr.NormalizeState(state)
-
         return self.decisionMaker.choose_action(state, validActions, targetValues)     
 
     def NumRuns(self):
         return self.decisionMaker.NumRuns()
-
-    def TrimHistory(self):
-        count = self.nonTrainingHistCount + 1
-        if count % self.params.numTrials2Learn == 0:
-            self.historyMngr.TrimHistory()
-            print("\t", threading.current_thread().getName(), ":", self.agentName,"->Trim History to size =", self.historyMngr.Size())
-
-        self.nonTrainingHistCount += 1
 
     def ResetHistory(self, dump2Old=True, save=False):
         self.historyMngr.Reset(dump2Old, save)
@@ -306,15 +327,8 @@ class DecisionMakerAlgoBase(BaseDecisionMaker):
 
 
     def ActionsValues(self, state, validActions, targetValues = False):
-        if not self.decisionMaker.TakeDfltValues():
-            state = self.historyMngr.NormalizeState(state)
-
         return self.decisionMaker.ActionsValues(state, validActions, targetValues)
 
-    def CopyTarget2Model(self, numRuns):
-        print("\t", threading.current_thread().getName(), ":", self.agentName,"->Copy Target 2 Model")
-        self.decisionMaker.CopyTarget2Model(numRuns)
-    
     def DiscountFactor(self):
         return self.decisionMaker.DiscountFactor()
 
@@ -361,11 +375,7 @@ class DecisionMakerAlgoBase(BaseDecisionMaker):
             numRuns = self.resultFile.NumRuns()
         
         return numRuns
-        
-        
-
-
-  
+          
 class DecisionMakerExperienceReplay(DecisionMakerAlgoBase):
     def __init__(self, modelType, modelParams, agentName='', decisionMakerName='', resultFileName='', historyFileName='', directory='', isMultiThreaded = False):
         super(DecisionMakerExperienceReplay, self).__init__( modelType=modelType, modelParams=modelParams, agentName=agentName, decisionMakerName=decisionMakerName, 
@@ -376,7 +386,6 @@ class DecisionMakerExperienceReplay(DecisionMakerAlgoBase):
         self.endRunLock.acquire()
 
         numRun = int(self.NumRuns())
-        #print(threading.current_thread().getName(), ":", self.agentName,"->for trial#", numRun, ": reward =", r, "score =", score, "steps =", steps)
 
         save = True if (numRun + 1) % self.params.numTrials2Save == 0 else False
         train = True if (numRun + 1) % self.params.numTrials2Learn == 0 else False
@@ -384,224 +393,38 @@ class DecisionMakerExperienceReplay(DecisionMakerAlgoBase):
         if self.resultFile != None:
             self.resultFile.end_run(r, score, steps, save)
 
-        if train:
-            self.trial2LearnModel = numRun + 1
-            self.trainFlag = True 
-                
-        self.decisionMaker.end_run(r)
+        if save:
+            self.historyMngr.Save()
 
+        if train:
+            self.Train()
+            self.decisionMaker.end_run(r)
+            self.decisionMaker.Save()
+        else:        
+            self.decisionMaker.end_run(r)
+            
         self.endRunLock.release()
         
         return save 
 
-    def TrainAll(self):
-        self.copyTargetLock.acquire()
-        if self.CopyTarget2ModelNumRuns > 0:
-            self.CopyTarget2Model(self.CopyTarget2ModelNumRuns)
-            self.CopyTarget2ModelNumRuns = -1
-        self.copyTargetLock.release()
-
-
-        numTrial2Learn = -1
-        
-        if self.trainFlag:
-            numTrial2Learn = self.Train()
-            self.trainFlag = False
-
-        numTrialsSa = super(DecisionMakerExperienceReplay, self).TrainAll()
-       
-        return numTrial2Learn if numTrial2Learn >= 0 else numTrialsSa
-
     def Train(self):
-        s,a,r,s_, terminal = self.historyMngr.GetHistory()
-        numRuns2Learn = -1
-       
-        if len(a) > self.params.minReplaySize:
-            start = datetime.datetime.now()
-            
-            self.decisionMaker.learn(s, a, r, s_, terminal, self.trial2LearnModel)
-            self.endRunLock.acquire()
-            numRuns2Learn = self.trial2LearnModel
-            self.decisionMaker.Save(self.trial2LearnModel)
-            self.endRunLock.release()
 
-            diff = datetime.datetime.now() - start
-            msDiff = diff.seconds * 1000 + diff.microseconds / 1000
-            
-            print("\t", threading.current_thread().getName(), ":", self.agentName,"->ExperienceReplay - training with hist size = ", len(r), ", last", msDiff, "milliseconds")
-        else:
-            print("\t", threading.current_thread().getName(), ":", self.agentName,"->ExperienceReplay size to small - training with hist size = ", len(r))
+        start = time()
+        if self.historyMngr.Size() > self.params.minReplaySize:
+            sizeHist = min(self.params.epochSize, self.historyMngr.Size())
+            s, a, r, s_, terminal = self.historyMngr.get_sample(sizeHist)
 
-        return numRuns2Learn
+            self.decisionMaker.learn(s, a, r, s_, terminal)
+           #if self.printTrain:
+            print("\t", threading.current_thread().getName(), ":", self.agentName,"->learn on", sizeHist, "transitions, duration =", (time() - start) / 60.0)
+            
+            if self.params.type == "A2C":
+                self.historyMngr.Reset()
+
+        return (time() - start) / 60.0
 
     def ActionsValues(self, state, validActions, targetValues = False):
-        if not self.decisionMaker.TakeDfltValues():
-            state = self.historyMngr.NormalizeState(state)
-
         return self.decisionMaker.ActionsValues(state, targetValues)
-
-    def CheckModel(self, agent, plotGraphs=False, withDfltModel=False, statesIdx2Check=[], actions2Check=[]):
-        
-        np.set_printoptions(precision=2, suppress=True)
-        
-        print(self.agentName, "hist size =", len(self.historyMngr.transitions["a"]))
-        print(self.agentName, "old hist size", len(self.historyMngr.oldTransitions["a"]))
-        print(self.agentName, "all history size", len(self.historyMngr.GetAllHist()["a"]))
-
-        print(self.agentName, "maxVals =", self.historyMngr.transitions["maxStateVals"])
-        print(self.agentName, "maxReward =", self.historyMngr.GetMaxReward(), "minReward =", self.historyMngr.GetMinReward())
-        print("\n")
-
-        numStates2Check = 100
-
-        states2Check = []
-        vals = []
-        valsTarget = []
-        for i in range(numStates2Check):
-            s = self.DrawStateFromHist()
-            if len(s) > 0:
-                states2Check.append(s)
-                validActions = agent.ValidActions4State(s)
-                vals.append(self.ActionsValues(s, validActions, targetValues=False))
-                valsTarget.append(self.ActionsValues(s, validActions, targetValues=True))
-
-        print(self.agentName, ": current dqn num runs = ", self.decisionMaker.NumRuns()," avg values =", np.average(vals, axis=0))
-        print(self.agentName, ": target dqn num runs = ", self.decisionMaker.NumRunsTarget()," avg values =", np.average(valsTarget, axis=0))
-        
-        if withDfltModel:
-            print("dqn value =", self.decisionMaker.ValueDqn(), "target value =", self.decisionMaker.ValueTarget(), "heuristic values =", self.decisionMaker.ValueDefault())
-        else:
-            print("dqn value =", self.decisionMaker.ValueDqn(), "target value =", self.decisionMaker.ValueTarget())
-
-        print("\n\n")
-
-        if plotGraphs:
-            self.decisionMaker.CreateModelGraphs(agent, statesIdx=statesIdx2Check, actions2Check=actions2Check)
-            self.decisionMaker.CreateModelGraphs(agent, statesIdx=statesIdx2Check, actions2Check=actions2Check, plotTarget=True)
-
-    def CreateModelGraphs(self, agent, stateIdx2Check, actions2Check, plotTarget=False, dir2Save=None, numTrials=-1, maxSize2Plot=20000):
-        import matplotlib.pyplot as plt
-        from utils_plot import plotImg
-
-        plotType = "target" if plotTarget else "current"
-
-        figVals = None
-        isFigVals = False
-        figDiff = None
-        isFigDiff = False
-
-        idxX = stateIdx2Check[0]
-        idxY = stateIdx2Check[1]
-        
-        if plotTarget:
-            numRuns = self.decisionMaker.NumRunsTarget()
-        else:
-            numRuns = numTrials if numTrials >= 0 else self.decisionMaker.NumRuns()
-
-        xName = agent.StateIdx2Str(idxX)
-        yName = agent.StateIdx2Str(idxY)
-
-        actionsPoints = {}
-
-        # extracting nn vals for current nn and target nn
-
-        for a in actions2Check:
-            actionsPoints[a] = [[], [], [], []]
-
-        sizeHist = len(self.historyMngr.Size())
-        size2Plot = min(sizeHist, maxSize2Plot)
-        for i in range(size2Plot):
-            s = self.DrawStateFromHist(realState=False)
-            validActions = agent.ValidActions4State(s)
-            vals = self.ActionsValues(s, validActions, targetValues=plotTarget)
-            
-            if xName == "min" or xName == "MIN":
-                s[idxX] = int(s[idxX] / 25) 
-            if yName == "min" or yName == "MIN":
-                s[idxY] = int(s[idxY] / 25) 
-
-            def addPoint(x, y, val, actionVec):
-                for i in range(len(actionVec[0])):
-                    if x == actionVec[0][i] and y == actionVec[1][i]:
-                        actionVec[2][i].append(val)
-                        return
-                
-                actionVec[0].append(x)
-                actionVec[1].append(y)
-                actionVec[2].append([val])
-                actionVec[3].append(0)
-
-
-            for a in actions2Check:
-                if a in validActions:
-                    addPoint(s[idxX], s[idxY], vals[a], actionsPoints[a])
-                else:
-                    addPoint(s[idxX], s[idxY], np.nan, actionsPoints[a])
-
-        # calculating avg val
-        maxVal = -1.0
-        minVal = 1.0
-
-        for a in actions2Check:
-            for i in range(len(actionsPoints[a][0])):
-                actionsPoints[a][3][i] = np.nanmean(np.array(actionsPoints[a][2][i])) 
-                maxVal = max(maxVal, actionsPoints[a][3][i])
-                minVal = min(minVal, actionsPoints[a][3][i])
-
-        
-        numRows = math.ceil(len(actions2Check) / 2)
-        idxPlot = 1
-
-        figVals = plt.figure(figsize=(19.0, 11.0))
-        plt.suptitle("action evaluation - " + plotType + ": (#trials = " + str(numRuns) + ")")
-        for a in actions2Check:
-            x = np.array(actionsPoints[a][0])
-            y = np.array(actionsPoints[a][1])
-            z = np.array(actionsPoints[a][3])
-            ax = figVals.add_subplot(numRows, 2, idxPlot)
-            img = plotImg(ax, x, y, z, xName, yName, "values for action = " + agent.Action2Str(a, onlyAgent=True), minZ=minVal, maxZ=maxVal)
-            if img != None:
-                isFigVals = True
-                figVals.colorbar(img, shrink=0.4, aspect=5)
-                idxPlot += 1
-        
-        idxPlot = 1
-
-        numRows = math.ceil(len(actions2Check) * (len(actions2Check) - 1) / 2)
-
-        figDiff = plt.figure(figsize=(19.0, 11.0))
-        plt.suptitle("differrence in action values - " + plotType + ": (#trials = " + str(numRuns) + ")")
-        idxPlot = 1
-
-        for a1Idx in range(len(actions2Check)):
-            a1 = actions2Check[a1Idx]
-            x = np.array(actionsPoints[a1][0])
-            y = np.array(actionsPoints[a1][1])
-            z1 = np.array(actionsPoints[a1][3])
-
-            if len(z1) == 0:
-                continue
-
-            for a2Idx in range(a1Idx + 1, len(actions2Check)):
-                a2 = actions2Check[a2Idx]
-                z2 = np.array(actionsPoints[a2][3])
-
-                zDiff = z1 - z2
-                maxZ = np.max(np.abs(zDiff))
-                ax = figDiff.add_subplot(numRows, 2, idxPlot)
-                title = "values for differrence = " + agent.Action2Str(a1, onlyAgent=True) + " - " + agent.Action2Str(a2, onlyAgent=True)
-                img = plotImg(ax, x, y, zDiff, xName, yName, title, minZ=-maxZ, maxZ=maxZ)
-                if img != None:
-                    isFigDiff = True
-                    figDiff.colorbar(img, shrink=0.4, aspect=5)
-                    idxPlot += 1
-    
-        if dir2Save != None:
-            if isFigVals:
-                figVals.savefig(dir2Save + plotType + "DQN_" + str(numRuns))
-            if isFigDiff:
-                figDiff.savefig(dir2Save + plotType + "DQNDiff_" + str(numRuns))
-
 
 
 class DecisionMakerOnlineAsync(DecisionMakerAlgoBase):

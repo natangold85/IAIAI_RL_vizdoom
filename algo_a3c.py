@@ -28,7 +28,7 @@ class A3C_PARAMS(ParamsBase):
         self.type = "A3C"
         self.numTrials2CmpResults = numTrials2CmpResults
         self.outputGraph = outputGraph
-        self.normalizeState = True
+        self.normalizeState = False
         self.numTrials2Save = numTrials2Save
 
 class A3C:

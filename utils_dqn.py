@@ -18,10 +18,10 @@ class DQN_PARAMS(ParamsBase):
     def __init__(self, stateSize, numActions, layersNum=1, neuronsInLayerNum=256, numTrials2CmpResults=1000, nn_Func=None, 
                 outputGraph=False, discountFactor=0.95, batchSize=32, maxReplaySize=500000, minReplaySize=1000, 
                 explorationProb=0.1, descendingExploration=True, exploreChangeRate=0.001, learning_rate=0.00001, 
-                scopeVarName='', normalizeRewards=False, numRepeatsTerminalLearning=10, accumulateHistory=True):
+                scopeVarName='', normalizeRewards=False, numRepeatsTerminalLearning=10, accumulateHistory=True, withConvolution=True):
 
         super(DQN_PARAMS, self).__init__(stateSize=stateSize, numActions=numActions, discountFactor=discountFactor, 
-                                            maxReplaySize=maxReplaySize, minReplaySize=minReplaySize)
+                                            maxReplaySize=maxReplaySize, minReplaySize=minReplaySize, withConvolution=withConvolution)
         
 
         self.learning_rate = learning_rate
@@ -53,30 +53,6 @@ class DQN_PARAMS(ParamsBase):
             return self.explorationProb + (1 - self.explorationProb) * np.exp(-self.exploreChangeRate * resultRatio * numRuns)
         else:
             return self.explorationProb
-
-class DQN_EMBEDDING_PARAMS(DQN_PARAMS):
-    def __init__(self, stateSize, embeddingInputSize, numActions, numTrials2CmpResults = 1000, nn_Func = None, outputGraph = False, 
-                discountFactor = 0.95, batchSize = 32, maxReplaySize = 500000, minReplaySize = 1000, explorationProb = 0.1, descendingExploration = True, 
-                exploreChangeRate = 0.0005, scopeVarName = '', accumulateHistory=True):
-        
-        super(DQN_EMBEDDING_PARAMS, self).__init__(stateSize=stateSize, numActions=numActions, numTrials2CmpResults=numTrials2CmpResults, nn_Func=nn_Func, 
-                                                    outputGraph=outputGraph, discountFactor=discountFactor, batchSize=batchSize, maxReplaySize=maxReplaySize, minReplaySize=minReplaySize, 
-                                                    explorationProb=explorationProb, descendingExploration=descendingExploration, exploreChangeRate=exploreChangeRate, scopeVarName=scopeVarName, 
-                                                    accumulateHistory=accumulateHistory)
-        
-        self.embeddingInputSize = embeddingInputSize
-        self.type = "DQN_Embedding"
-        
-class DQN_PARAMS_WITH_DEFAULT_DM(DQN_PARAMS):
-    def __init__(self, stateSize, numActions, numTrials2CmpResults = 1000, nn_Func = None, outputGraph = False, 
-                discountFactor = 0.95, batchSize = 32, maxReplaySize = 500000, minReplaySize = 1000, explorationProb = 0.1, descendingExploration = True, 
-                exploreChangeRate = 0.0005, scopeVarName = '', layersNum = 1, neuronsInLayerNum = 256, accumulateHistory=True):
-        
-        super(DQN_PARAMS_WITH_DEFAULT_DM, self).__init__(stateSize=stateSize, numActions=numActions, numTrials2CmpResults=numTrials2CmpResults, nn_Func=nn_Func, layersNum=layersNum, neuronsInLayerNum=neuronsInLayerNum,
-                                                    outputGraph=outputGraph, discountFactor=discountFactor, batchSize=batchSize, maxReplaySize=maxReplaySize, minReplaySize=minReplaySize, 
-                                                    explorationProb=explorationProb, descendingExploration=descendingExploration, exploreChangeRate=exploreChangeRate, scopeVarName=scopeVarName, accumulateHistory=accumulateHistory)
-
-        self.defaultDecisionMaker = None
 
 
 class DQN:
