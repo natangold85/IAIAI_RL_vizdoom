@@ -1,0 +1,53 @@
+['./runVDAgent.py', '--runDir=OrigRun', '--resetModel=True', '--trainAgent=VDAgent']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=deadly_corridor']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=deadly_corridor']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=deadly_corridor']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=deadly_corridor']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=deadly_corridor']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=deadly_corridor']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=deadly_corridor']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=deadly_corridor']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=basic']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=basic']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=deadly_corridor']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=deadly_corridor']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=deadly_corridor']
+
+['./runVDAgent.py', '--act=play', '--runDir=OrigRun', '--testAgent=VDAgent', '--numEpisodes=10', '--map=deadly_corridor']

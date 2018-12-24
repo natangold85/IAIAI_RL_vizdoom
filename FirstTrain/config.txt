@@ -1,0 +1,1 @@
+{"super_agent" : "dqn_2l", "navigation": "dqn_2l", "attack": "dqn_2l"}

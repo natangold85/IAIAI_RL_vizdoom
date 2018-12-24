@@ -1,0 +1,1 @@
+['./runVDAgent.py', '--runDir=DQNRunEmbedding', '--trainAgent=VDAgent', '--numEpisodes=3000', '--resetModel=True', '--numRuns=8']

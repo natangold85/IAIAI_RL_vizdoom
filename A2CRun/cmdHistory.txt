@@ -1,0 +1,1 @@
+['./runVDAgent.py', '--runDir=A2CRun', '--resetModel=True', '--trainAgent=super_agent', '--numEpisodes=3000', '--numRuns=1']

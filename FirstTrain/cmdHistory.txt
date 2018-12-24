@@ -1,0 +1,3 @@
+['./runVDAgent.py', '--map=deathmatch', '--runDir=FirstTrain', '--resetModel=True', '--trainAgent=attack', '--playAgent=attack', '--numRuns=4']
+
+['./runVDAgent.py', '--map=deathmatch', '--runDir=FirstTrain', '--trainAgent=attack', '--playAgent=attack', '--numRuns=4']

@@ -1,0 +1,1 @@
+['./runVDAgent.py', '--runDir=DQNRun4Transition', '--resetModel=True', '--trainAgent=VDAgent']

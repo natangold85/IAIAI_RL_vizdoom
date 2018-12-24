@@ -1,0 +1,1 @@
+['./runVDAgent.py', '--act=gp', '--runDir=A2CGP', '--resetModel=True', '--populationSize=10', '--testAgent=VDAgent', '--gpAct=trainSingle', '--populationIdx=9', '--populationInstanceIdx=0']
